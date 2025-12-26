@@ -1,10 +1,16 @@
 import { GoogleGenAI } from "@google/genai";
 import { AnalysisResult, PortfolioItem } from '../types';
 
-// Initialize the client
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Hybrid Initialization: 
+// If API_KEY is available (Dev mode / Build time injection), use Client SDK for max speed.
+// If missing (Deployment), use the backend proxy.
+const apiKey = process.env.API_KEY;
+let ai: GoogleGenAI | null = null;
+if (apiKey) {
+  ai = new GoogleGenAI({ apiKey });
+}
 
-// Model Configuration - Using Pro for accuracy, but tuning budget for speed
+// Model Configuration
 const MODEL_NAME = "gemini-3-pro-preview";
 
 const JSON_SYSTEM_INSTRUCTION = `
@@ -90,7 +96,29 @@ const JSON_SYSTEM_INSTRUCTION = `
   MANDATORY ENDING: [[[Strong Buy]]], [[[Buy]]], [[[Hold]]], [[[Sell]]], or [[[Strong Sell]]].
 `;
 
-// --- HELPER PARSER ---
+// --- HELPER: Fetch from Backend ---
+const fetchFromBackend = async (mode: string, data: any) => {
+    const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode, data })
+    });
+    
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Server Error: ${response.status}`);
+    }
+    
+    // For chat, it returns text directly
+    if (mode === 'chat') {
+        return await response.text();
+    }
+    
+    // For analysis, it returns JSON with { text, metadata }
+    return await response.json();
+};
+
+// --- HELPER: Response Parser ---
 const parseResponse = (rawText: string, metadata: any[]): AnalysisResult => {
   let structuredData = null;
   let markdownReport = rawText;
@@ -100,18 +128,16 @@ const parseResponse = (rawText: string, metadata: any[]): AnalysisResult => {
 
   if (jsonMatch && jsonMatch[1]) {
     try {
-      // Clean potential trailing commas or formatting issues
       const cleanJson = jsonMatch[1]
         .replace(/,\s*}/g, '}')
         .replace(/,\s*]/g, ']');
       structuredData = JSON.parse(cleanJson);
-      // Remove the JSON block from the report text
       markdownReport = rawText.replace(jsonMatch[0], '').trim();
     } catch (e) {
       console.error("JSON Parse Failed:", e);
     }
   } else {
-      // Fallback: look for raw object brackets
+      // Fallback
       const firstBrace = rawText.indexOf('{');
       const lastBrace = rawText.lastIndexOf('}');
       if (firstBrace !== -1 && lastBrace !== -1) {
@@ -136,27 +162,35 @@ const parseResponse = (rawText: string, metadata: any[]): AnalysisResult => {
 
 export const analyzeMarket = async (query: string, onUpdate?: (data: AnalysisResult) => void): Promise<AnalysisResult> => {
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: query,
-      config: {
-        systemInstruction: JSON_SYSTEM_INSTRUCTION,
-        tools: [{ googleSearch: {} }],
-        // Reduced thinking budget to 1024 to balance speed vs accuracy
-        thinkingConfig: { thinkingBudget: 1024 }, 
-      }
-    });
+    let text = "";
+    let groundingChunks = [];
 
-    const text = response.text || "";
-    // Extract grounding chunks if available
-    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    if (ai) {
+        // Client-side Execution (Fastest)
+        const response = await ai.models.generateContent({
+            model: MODEL_NAME,
+            contents: query,
+            config: {
+                systemInstruction: JSON_SYSTEM_INSTRUCTION,
+                tools: [{ googleSearch: {} }],
+                thinkingConfig: { thinkingBudget: 1024 }, 
+            }
+        });
+        text = response.text || "";
+        groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    } else {
+        // Server-side Fallback
+        const result = await fetchFromBackend('market', query);
+        text = result.text;
+        groundingChunks = result.metadata || [];
+    }
 
     const result = parseResponse(text, groundingChunks);
     if (onUpdate) onUpdate(result);
     return result;
 
   } catch (error: any) {
-    console.error("Gemini Market Analysis Error:", error);
+    console.error("Market Analysis Error:", error);
     throw new Error(error.message || "Market analysis failed.");
   }
 };
@@ -166,24 +200,32 @@ export const analyzePortfolio = async (portfolio: PortfolioItem[], onUpdate?: (d
     const portfolioStr = JSON.stringify(portfolio);
     const prompt = `Audit this portfolio for risk and exposure: ${portfolioStr}`;
     
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: prompt,
-      config: {
-        systemInstruction: JSON_SYSTEM_INSTRUCTION,
-        tools: [{ googleSearch: {} }],
-        thinkingConfig: { thinkingBudget: 1024 }, // Reduced for speed
-      }
-    });
+    let text = "";
+    let groundingChunks = [];
 
-    const text = response.text || "";
-    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    if (ai) {
+        const response = await ai.models.generateContent({
+            model: MODEL_NAME,
+            contents: prompt,
+            config: {
+                systemInstruction: JSON_SYSTEM_INSTRUCTION,
+                tools: [{ googleSearch: {} }],
+                thinkingConfig: { thinkingBudget: 1024 },
+            }
+        });
+        text = response.text || "";
+        groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    } else {
+        const result = await fetchFromBackend('portfolio', portfolioStr);
+        text = result.text;
+        groundingChunks = result.metadata || [];
+    }
     
     const result = parseResponse(text, groundingChunks);
     if (onUpdate) onUpdate(result);
     return result;
   } catch (error: any) {
-    console.error("Gemini Portfolio Analysis Error:", error);
+    console.error("Portfolio Analysis Error:", error);
     throw new Error(error.message || "Portfolio analysis failed.");
   }
 };
@@ -192,24 +234,32 @@ export const analyzeBubbles = async (onUpdate?: (data: AnalysisResult) => void):
   try {
     const prompt = `Scan global markets for major Bubbles, Overvalued Assets, and Crash Risks. Identify at least 4-6 specific assets.`;
     
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME, 
-      contents: prompt,
-      config: {
-        systemInstruction: JSON_SYSTEM_INSTRUCTION,
-        tools: [{ googleSearch: {} }],
-        thinkingConfig: { thinkingBudget: 1024 }, // Reduced for speed
-      }
-    });
+    let text = "";
+    let groundingChunks = [];
 
-    const text = response.text || "";
-    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    if (ai) {
+        const response = await ai.models.generateContent({
+            model: MODEL_NAME, 
+            contents: prompt,
+            config: {
+                systemInstruction: JSON_SYSTEM_INSTRUCTION,
+                tools: [{ googleSearch: {} }],
+                thinkingConfig: { thinkingBudget: 1024 },
+            }
+        });
+        text = response.text || "";
+        groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    } else {
+        const result = await fetchFromBackend('bubbles', {});
+        text = result.text;
+        groundingChunks = result.metadata || [];
+    }
     
     const result = parseResponse(text, groundingChunks);
     if (onUpdate) onUpdate(result);
     return result;
   } catch (error: any) {
-    console.error("Gemini Bubble Analysis Error:", error);
+    console.error("Bubble Analysis Error:", error);
     throw new Error(error.message || "Bubble analysis failed.");
   }
 };
@@ -220,17 +270,23 @@ export const chatWithGemini = async (
   context: { symbol: string, riskScore: number, sentiment: string }
 ): Promise<string> => {
     try {
-        const chat = ai.chats.create({
-            model: "gemini-3-flash-preview", // Flash is optimal for chat latency
-            config: {
-                systemInstruction: `You are 'The Reality Check', a witty, sarcastic, but intelligent financial assistant. 
-                Context: User is looking at ${context.symbol} (Risk: ${context.riskScore}, Sentiment: ${context.sentiment}).
-                Keep it short. Use emojis.`,
-            }
-        });
-        
-        const response = await chat.sendMessage({ message: message });
-        return response.text || "I'm speechless.";
+        if (ai) {
+            const chat = ai.chats.create({
+                model: "gemini-3-flash-preview",
+                config: {
+                    systemInstruction: `You are 'The Reality Check', a witty, sarcastic, but intelligent financial assistant. 
+                    Context: User is looking at ${context.symbol} (Risk: ${context.riskScore}, Sentiment: ${context.sentiment}).
+                    Keep it short. Use emojis.`,
+                }
+            });
+            const response = await chat.sendMessage({ message: message });
+            return response.text || "I'm speechless.";
+        } else {
+            // Server fallback for chat
+            // We need to pass the context in the message or construct the history carefully
+            // For simplicity in fallback, we'll send the raw payload
+            return await fetchFromBackend('chat', { history, message, context });
+        }
     } catch (error) {
         console.error("Chat Error:", error);
         return "Connection lost. The Reality Check is offline.";
