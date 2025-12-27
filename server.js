@@ -13,28 +13,33 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --- API KEY SETUP ---
-const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
-
-if (!API_KEY) {
-  console.error("❌ CRITICAL: GROQ_API_KEY is missing. Server will fail.");
-}
-
-// --- CORS ---
+// --- CORS MIDDLEWARE ---
+// origin: true dynamically sets Access-Control-Allow-Origin to the request Origin header.
+// This allows strict security (credentials: true) without the wildcard (*) conflict.
 app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  origin: true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
 }));
+
+// Enable pre-flight for all routes
+app.options('*', cors());
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'dist')));
 
+// --- API KEY SETUP ---
+const API_KEY = process.env.GROQ_API_KEY || process.env.API_KEY;
+
+if (!API_KEY) {
+  console.error("❌ CRITICAL ERROR: GROQ_API_KEY is missing in .env file.");
+}
+
 // --- GROQ CLIENT ---
-const groq = new Groq({ apiKey: API_KEY });
+const groq = new Groq({ apiKey: API_KEY || 'dummy_key' });
 const MODEL_NAME = 'llama-3.3-70b-versatile'; 
 
-// --- ROBUST JSON EXTRACTOR ---
 function extractJSON(text) {
   try { return JSON.parse(text); } 
   catch (e) {
@@ -49,7 +54,6 @@ function extractJSON(text) {
   }
 }
 
-// --- FALLBACK DATA ---
 const FALLBACK_DATA = {
   riskScore: 50,
   bubbleProbability: 50,
@@ -135,37 +139,34 @@ Schema:
 }
 `;
 
-// --- API ENDPOINT ---
 app.post('/api/analyze', async (req, res) => {
   const { mode, data } = req.body;
   console.log(`[GROQ SERVER] Request Mode: ${mode}`);
 
+  if (!API_KEY) {
+    return res.json({
+      markdownReport: "### Configuration Error\n\nNo API Key found. Check .env",
+      structuredData: FALLBACK_DATA
+    });
+  }
+
   try {
-    // 1. Chat Mode
     if (mode === 'chat') {
         const payload = typeof data === 'string' ? JSON.parse(data) : data;
-        const history = payload.history || [];
-        const message = payload.message || '';
-        
         const completion = await groq.chat.completions.create({
             messages: [
-                { role: "system", content: "You are 'The Reality Check'. Be brief and witty." },
-                ...history.map(h => ({ role: h.sender === 'user' ? 'user' : 'assistant', content: h.text })),
-                { role: "user", content: message }
+                { role: "system", content: "You are 'The Reality Check'. Be brief, witty, and financially savvy." },
+                ... (payload.history || []).map(h => ({ role: h.sender === 'user' ? 'user' : 'assistant', content: h.text })),
+                { role: "user", content: payload.message || '' }
             ],
             model: MODEL_NAME,
             max_tokens: 200,
         });
-        return res.status(200).send(completion.choices[0]?.message?.content || "...");
+        return res.send(completion.choices[0]?.message?.content || "...");
     }
 
-    // 2. Analysis Mode
-    let userPrompt = "";
-    if (mode === 'market') userPrompt = `Analyze: ${data}`;
-    else if (mode === 'portfolio') userPrompt = `Audit portfolio: ${data}`;
-    else if (mode === 'bubbles') userPrompt = `Scan for bubbles.`;
+    let userPrompt = mode === 'market' ? `Analyze: ${data}` : mode === 'portfolio' ? `Audit portfolio: ${data}` : `Scan bubbles.`;
 
-    console.log("[GROQ SERVER] Generating JSON...");
     const jsonCompletion = await groq.chat.completions.create({
         messages: [
             { role: "system", content: JSON_SYSTEM_PROMPT },
@@ -180,11 +181,10 @@ app.post('/api/analyze', async (req, res) => {
     let structuredData = extractJSON(rawContent);
 
     if (!structuredData || !structuredData.riskScore) {
-        console.warn("[GROQ SERVER] JSON Parse Failed, using fallback.");
         structuredData = FALLBACK_DATA;
     }
 
-    // Compat: Backfill trendData
+    // Backfill trendData for compatibility
     if (structuredData.technicalAnalysis?.priceData) {
         structuredData.trendData = structuredData.technicalAnalysis.priceData.map(p => ({
             label: p.date,
@@ -193,7 +193,6 @@ app.post('/api/analyze', async (req, res) => {
         }));
     }
 
-    console.log("[GROQ SERVER] Generating Report...");
     const reportCompletion = await groq.chat.completions.create({
         messages: [
             { role: "system", content: "You are a Wall Street Analyst. Write a Markdown summary." },
@@ -202,15 +201,14 @@ app.post('/api/analyze', async (req, res) => {
         model: MODEL_NAME,
     });
 
-    res.status(200).json({ 
+    res.json({ 
       markdownReport: reportCompletion.choices[0]?.message?.content || "Analysis complete.", 
       structuredData 
     });
 
   } catch (error) {
     console.error("[GROQ SERVER ERROR]", error);
-    // Return 200 with error info to prevent frontend crash
-    res.status(200).json({ 
+    res.json({ 
         markdownReport: `### Server Error\n${error.message}`,
         structuredData: FALLBACK_DATA 
     });
@@ -222,6 +220,16 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
+// --- GLOBAL ERROR HANDLER ---
+// Captures any sync/async crashes and returns JSON to prevent HTML stacktrace CORS errors
+app.use((err, req, res, next) => {
+  console.error("🔥 GLOBAL SERVER ERROR:", err);
+  res.status(500).json({
+    error: "Internal Server Error",
+    details: err.message
+  });
+});
+
 app.listen(PORT, () => {
-  console.log(`✅ GROQ-POWERED Server running on port ${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
 });

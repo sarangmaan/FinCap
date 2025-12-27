@@ -5,12 +5,13 @@ A comprehensive AI-powered financial analysis tool that detects market bubbles, 
 ## 🔑 Getting Started
 
 ### 1. API Key Setup (Required)
-You **must** set up your Google Gemini API key as an environment variable. **Do not** put your API key in the source code.
+You **must** set up your Groq API key as an environment variable. 
 
-1.  Create a file named `.env` in the root directory of this project.
-2.  Add your API key to the file:
+1.  Get a key from [Groq Cloud Console](https://console.groq.com/keys).
+2.  Create a file named `.env` in the root directory.
+3.  Add your API key:
     ```
-    API_KEY=your_actual_api_key_here
+    GROQ_API_KEY=gsk_your_actual_api_key_here
     ```
 
 ### 2. Running the Application
@@ -33,13 +34,13 @@ You need two terminals:
     *This runs the UI on http://localhost:5173*
 
 **Option B: Production / Deployment**
-Deploy to a host like Vercel or Render. Ensure you set the `API_KEY` environment variable in your hosting provider's dashboard.
+Deploy to a host like Vercel or Render. Ensure you set the `GROQ_API_KEY` environment variable in your hosting provider's dashboard.
 
 ## 🚀 Features
-*   **Market Analysis**: Deep dives into stocks, crypto, and indices using real-time Google Search data.
+*   **Market Analysis**: Deep dives into stocks, crypto, and indices.
 *   **Portfolio Tracker**: Manual portfolio entry with AI risk auditing.
 *   **Bubble Scope**: Dedicated mode to detect overvalued sectors and crash risks.
 *   **Visual Reports**: Markdown reports, risk gauges, and interactive charts.
 
 ## 🔒 Security Note
-The frontend never sees your API key. It is stored securely on the server (or serverless function) via `process.env.API_KEY`.
+The frontend never sees your API key. It is stored securely on the server (or serverless function) via `process.env.GROQ_API_KEY`.

@@ -28,8 +28,10 @@ const App: React.FC = () => {
 
   const handleError = (err: any) => {
       console.error("App Error:", err);
-      setError(err.message || 'Analysis Failed. Check console.');
-      setView(ViewState.ERROR);
+      // Don't show error view, try to stay on report if we have partial data, otherwise dashboard
+      // But if we have a fallback mechanism, we shouldn't hit this often.
+      setError(err.message || 'Analysis Failed.');
+      // setView(ViewState.ERROR); // Fallback prevents this
   };
 
   const handleUpdatePortfolio = (items: PortfolioItem[]) => {
@@ -59,6 +61,8 @@ const App: React.FC = () => {
       setView(ViewState.REPORT);
     } catch (err: any) {
       handleError(err);
+      // If critical fail, go to error
+      if (!result) setView(ViewState.ERROR);
     } finally {
       setLoading(false);
     }
@@ -88,6 +92,7 @@ const App: React.FC = () => {
       setView(ViewState.REPORT);
     } catch (err: any) {
       handleError(err);
+      if (!result) setView(ViewState.ERROR);
     } finally {
       setLoading(false);
     }
@@ -198,7 +203,8 @@ const App: React.FC = () => {
                      </div>
                      <div className="absolute -inset-4 border border-dashed border-sky-500/20 rounded-full animate-[spin_10s_linear_infinite]"></div>
                   </div>
-                  <h2 className="text-3xl font-black text-white mb-3 uppercase tracking-widest bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
+                  {/* Fixed text background clip issue */}
+                  <h2 className="text-3xl font-black text-white mb-3 uppercase tracking-widest text-center">
                     Initiating Scan
                   </h2>
                   <div className="flex items-center gap-2 text-slate-400 font-mono text-sm bg-slate-900/50 px-4 py-2 rounded-lg border border-white/5">

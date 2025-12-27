@@ -2,7 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
-  // Cast process to any to avoid TS error: Property 'cwd' does not exist on type 'Process'
+  // Cast process to any to avoid TS error
   const env = loadEnv(mode, (process as any).cwd(), '');
   return {
     plugins: [react()],
@@ -11,13 +11,11 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: 'http://localhost:3000',
           changeOrigin: true,
-          secure: false, // Important for localhost
+          secure: false, 
         }
       }
-    },
-    define: {
-      'process.env.API_KEY': JSON.stringify(env.API_KEY),
-      'process.env.GROQ_API_KEY': JSON.stringify(env.GROQ_API_KEY)
     }
+    // API KEYS REMOVED FROM HERE FOR SECURITY
+    // The frontend should never see process.env.API_KEY
   };
 });

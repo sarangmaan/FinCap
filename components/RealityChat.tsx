@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, X, Skull } from 'lucide-react';
-import { chatWithGemini } from '../services/geminiService';
+import { chatWithAI } from '../services/geminiService';
 
 interface RealityChatProps {
   isOpen: boolean;
@@ -62,14 +62,14 @@ const RealityChat: React.FC<RealityChatProps> = ({ isOpen, onClose, context }) =
     setLoading(true);
 
     try {
-      // Build History for Gemini
+      // Build History
       let history = messages.map(m => ({
         role: m.sender === 'user' ? 'user' : 'model',
         parts: [{ text: m.text }]
       }));
 
-      // Use Robust Service
-      const replyText = await chatWithGemini(history, currentInput, context);
+      // Use Robust Groq Service
+      const replyText = await chatWithAI(history, currentInput, context);
 
       setMessages(prev => [...prev, { 
         id: (Date.now() + 1).toString(), 
