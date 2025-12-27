@@ -26,21 +26,12 @@ const App: React.FC = () => {
     localStorage.setItem('fincap_portfolio', JSON.stringify(portfolioItems));
   }, [portfolioItems]);
 
-  // Safety Timeout: Increased to 300 seconds (5 mins) to prevent premature timeout
-  useEffect(() => {
-    let safetyTimer: ReturnType<typeof setTimeout>;
-    if (loading) {
-        safetyTimer = setTimeout(() => {
-            if (loading) {
-                console.warn("Analysis timed out via watchdog.");
-                setLoading(false);
-                setError("The analysis took too long. Please check your connection or API key and try again.");
-                setView(ViewState.ERROR);
-            }
-        }, 300000); // 5 minutes limit
-    }
-    return () => clearTimeout(safetyTimer);
-  }, [loading]);
+  const handleError = (err: any) => {
+      console.error("App Error:", err);
+      setLoading(false);
+      setError(err.message || 'Something went wrong.');
+      setView(ViewState.ERROR);
+  };
 
   const handleUpdatePortfolio = (items: PortfolioItem[]) => {
     setPortfolioItems(items);
@@ -52,44 +43,24 @@ const App: React.FC = () => {
     setLoading(true);
     setError(null);
     setAnalyzedQuery(searchQuery);
-    
-    // Show ANALYZING view first (Scanning UI)
-    setResult({ markdownReport: "", isEstimated: false });
+    setResult(null);
     setView(ViewState.ANALYZING);
 
     try {
       await analyzeMarket(searchQuery, (partialResult) => {
           setResult((prev) => {
-             const newData = {
+             return {
                 markdownReport: partialResult.markdownReport || prev?.markdownReport || "",
                 structuredData: partialResult.structuredData || prev?.structuredData,
                 groundingChunks: partialResult.groundingChunks || prev?.groundingChunks,
                 isEstimated: partialResult.isEstimated
              };
-             
-             // TRANSITION LOGIC:
-             // Switch to Report View only after we have received some text data.
-             if (newData.markdownReport.length > 20) {
-                 setView((current) => current === ViewState.ANALYZING ? ViewState.REPORT : current);
-             }
-
-             return newData;
           });
       });
-      
-      // Force transition to report view when promise resolves, regardless of content length
-      setView(ViewState.REPORT);
-
-    } catch (err: any) {
-      console.error("Search Analysis Failed:", err);
-      let msg = err.message || 'Something went wrong.';
-      if (msg.includes('503') || msg.includes('overloaded') || msg.includes('429')) {
-          msg = "High traffic or rate limit reached. Please try again in a moment.";
-      }
-      setError(msg);
-      setView(ViewState.ERROR);
-    } finally {
       setLoading(false);
+      setView(ViewState.REPORT);
+    } catch (err: any) {
+      handleError(err);
     }
   };
 
@@ -107,32 +78,17 @@ const App: React.FC = () => {
     setLoading(true);
     setError(null);
     setAnalyzedQuery("Portfolio Risk Audit");
-    
-    setResult({ markdownReport: "", isEstimated: false });
+    setResult(null);
     setView(ViewState.ANALYZING);
 
     try {
       await analyzePortfolio(portfolioItems, (partialResult) => {
-          setResult((prev) => {
-             const newData = {
-                markdownReport: partialResult.markdownReport || prev?.markdownReport || "",
-                structuredData: partialResult.structuredData || prev?.structuredData,
-                groundingChunks: partialResult.groundingChunks || prev?.groundingChunks,
-                isEstimated: partialResult.isEstimated
-             };
-             
-             if (newData.markdownReport.length > 20) {
-                 setView((current) => current === ViewState.ANALYZING ? ViewState.REPORT : current);
-             }
-             return newData;
-          });
+          setResult(partialResult);
       });
+      setLoading(false);
       setView(ViewState.REPORT);
     } catch (err: any) {
-      setError(err.message || 'Portfolio analysis failed.');
-      setView(ViewState.ERROR);
-    } finally {
-      setLoading(false);
+      handleError(err);
     }
   };
 
@@ -140,23 +96,16 @@ const App: React.FC = () => {
       setLoading(true);
       setError(null);
       setAnalyzedQuery("Global Market Bubble Scope");
-      setResult({ markdownReport: "Initiating Global Market Scan...", isEstimated: false });
+      setResult(null); 
       setView(ViewState.BUBBLE_SCOPE);
       
       try {
           await analyzeBubbles((partialResult) => {
-              setResult((prev) => ({
-                  markdownReport: partialResult.markdownReport || prev?.markdownReport || "",
-                  structuredData: partialResult.structuredData || prev?.structuredData,
-                  groundingChunks: partialResult.groundingChunks || prev?.groundingChunks,
-                  isEstimated: partialResult.isEstimated
-              }));
+              setResult(partialResult);
           });
-      } catch (err: any) {
-          setError(err.message || 'Bubble Scope analysis failed.');
-          setView(ViewState.ERROR);
-      } finally {
           setLoading(false);
+      } catch (err: any) {
+          handleError(err);
       }
   };
   
@@ -186,11 +135,9 @@ const App: React.FC = () => {
         background: 'radial-gradient(circle at top, #1e293b 0%, #0f172a 100%)'
       }}
     >
-      {/* Film Grain Overlay */}
       <div className="bg-grain"></div>
 
       <div className="relative z-10 flex flex-col min-h-screen pt-4 pb-4 px-6 md:px-8">
-        {/* Navigation */}
         <nav className="sticky top-4 z-40 bg-[#0f172a]/95 backdrop-blur-xl rounded-2xl border border-white/10 mb-8 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)]">
           <div className="px-6 h-16 flex items-center justify-between">
             <div className="flex items-center gap-3 cursor-pointer group" onClick={() => { setView(ViewState.DASHBOARD); handleNavClick('Markets'); }}>
@@ -213,7 +160,6 @@ const App: React.FC = () => {
 
         <main className="flex-grow w-full max-w-7xl mx-auto">
           
-          {/* Search Bar Container */}
           <div className={`mb-12 transition-all duration-700 ease-out ${view === ViewState.DASHBOARD ? 'translate-y-0 opacity-100' : ''} overflow-visible`}>
              <div className={`max-w-4xl mx-auto ${view !== ViewState.DASHBOARD ? 'hidden' : 'block'}`}>
                 <h1 className="text-4xl md:text-6xl font-extrabold text-center mb-6 text-white tracking-tight drop-shadow-sm">
@@ -241,8 +187,6 @@ const App: React.FC = () => {
              </div>
           </div>
 
-          {/* Views */}
-          
           {view === ViewState.ANALYZING && (
               <div className="flex flex-col items-center justify-center min-h-[50vh] animate-in fade-in zoom-in-95 duration-500">
                   <div className="relative mb-8">
@@ -346,7 +290,6 @@ const App: React.FC = () => {
                </div>
             </div>
           )}
-
         </main>
         
         <footer className="mt-20 py-8 border-t border-slate-800/50">
