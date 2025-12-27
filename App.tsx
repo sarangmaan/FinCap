@@ -28,8 +28,7 @@ const App: React.FC = () => {
 
   const handleError = (err: any) => {
       console.error("App Error:", err);
-      setLoading(false);
-      setError(err.message || 'Something went wrong.');
+      setError(err.message || 'Analysis Failed. Check console.');
       setView(ViewState.ERROR);
   };
 
@@ -57,10 +56,11 @@ const App: React.FC = () => {
              };
           });
       });
-      setLoading(false);
       setView(ViewState.REPORT);
     } catch (err: any) {
       handleError(err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -85,10 +85,11 @@ const App: React.FC = () => {
       await analyzePortfolio(portfolioItems, (partialResult) => {
           setResult(partialResult);
       });
-      setLoading(false);
       setView(ViewState.REPORT);
     } catch (err: any) {
       handleError(err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -103,9 +104,10 @@ const App: React.FC = () => {
           await analyzeBubbles((partialResult) => {
               setResult(partialResult);
           });
-          setLoading(false);
       } catch (err: any) {
           handleError(err);
+      } finally {
+          setLoading(false);
       }
   };
   
@@ -203,6 +205,7 @@ const App: React.FC = () => {
                       <ScanLine className="w-4 h-4 animate-pulse text-sky-400" />
                       <span>Analyzing market data for <span className="text-white font-bold">"{analyzedQuery}"</span>...</span>
                   </div>
+                  <p className="mt-4 text-xs text-slate-500">Connecting to secure server...</p>
               </div>
           )}
           
@@ -212,7 +215,7 @@ const App: React.FC = () => {
                  <AlertTriangle className="w-8 h-8 text-rose-500" />
               </div>
               <h2 className="text-2xl font-extrabold text-white mb-3">Analysis Halted</h2>
-              <p className="text-slate-400 mb-8 px-6 leading-relaxed">{error}</p>
+              <p className="text-slate-400 mb-8 px-6 leading-relaxed font-mono text-sm">{error}</p>
               <button 
                 onClick={handleRetry}
                 className="bg-white text-slate-900 hover:bg-slate-200 px-8 py-3 rounded-lg font-bold transition-colors"

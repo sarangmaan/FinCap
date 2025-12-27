@@ -19,7 +19,7 @@
     "framer-motion": "^11.0.8",
     "html2canvas": "^1.4.1",
     "jspdf": "^2.5.1",
-    "@google/genai": "^0.1.1",
+    "groq-sdk": "^0.3.3",
     "express": "^5.2.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5"

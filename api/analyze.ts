@@ -1,215 +1,167 @@
-import { GoogleGenAI, Schema, Type } from "@google/genai";
+import Groq from 'groq-sdk';
 
-const MODEL_NAME = 'gemini-3-pro-preview';
+const MODEL_NAME = 'llama-3.3-70b-versatile';
 
-// --- SCHEMAS (Server-Side Definition) ---
-const technicalAnalysisSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    priceData: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          date: { type: Type.STRING },
-          price: { type: Type.NUMBER },
-          ma50: { type: Type.NUMBER }
-        }
-      }
-    },
-    rsiData: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          date: { type: Type.STRING },
-          value: { type: Type.NUMBER }
-        }
-      }
-    },
-    currentRsi: { type: Type.NUMBER },
-    currentMa: { type: Type.NUMBER },
-    signal: { type: Type.STRING, enum: ["Buy", "Sell", "Neutral"] }
+// --- FALLBACK DATA ---
+const FALLBACK_DATA = {
+  riskScore: 50,
+  bubbleProbability: 50,
+  marketSentiment: "Neutral",
+  keyMetrics: [{ label: "Status", value: "Fallback Data" }],
+  technicalAnalysis: {
+    priceData: [],
+    rsiData: [],
+    currentRsi: 50,
+    currentMa: 0,
+    signal: "Neutral"
+  },
+  bubbleAudit: {
+    riskStatus: "Elevated",
+    valuationVerdict: "Fair Value",
+    score: 50,
+    fundamentals: "Data unavailable",
+    peerContext: "Unavailable",
+    speculativeActivity: "Moderate",
+    burstTrigger: "None",
+    liquidityStatus: "Neutral"
+  },
+  swot: {
+    strengths: ["System Active"],
+    weaknesses: ["AI Connection Failed"],
+    opportunities: ["Retry"],
+    threats: ["Data Gaps"]
+  },
+  whistleblower: {
+    integrityScore: 100,
+    forensicVerdict: "Safe",
+    anomalies: [],
+    insiderDetails: []
+  },
+  topBubbleAssets: []
+};
+
+// --- SYSTEM PROMPT ---
+const JSON_SYSTEM_PROMPT = `
+You are a Senior Investment Banker. 
+Return valid JSON ONLY. No markdown.
+Schema:
+{
+  "riskScore": number,
+  "bubbleProbability": number,
+  "marketSentiment": "Bullish" | "Bearish" | "Neutral" | "Euphoric",
+  "keyMetrics": [{ "label": string, "value": string }],
+  "technicalAnalysis": {
+    "priceData": [{ "date": "YYYY-MM-DD", "price": number, "ma50": number }],
+    "rsiData": [{ "date": "string", "value": number }],
+    "currentRsi": number,
+    "currentMa": number,
+    "signal": "string"
+  },
+  "bubbleAudit": {
+    "riskStatus": "string",
+    "valuationVerdict": "string",
+    "score": number,
+    "fundamentals": "string",
+    "peerContext": "string",
+    "speculativeActivity": "string",
+    "burstTrigger": "string",
+    "liquidityStatus": "string"
+  },
+  "swot": {
+    "strengths": [string],
+    "weaknesses": [string],
+    "opportunities": [string],
+    "threats": [string]
+  },
+  "whistleblower": {
+    "integrityScore": number,
+    "forensicVerdict": string,
+    "anomalies": [string],
+    "insiderDetails": [string]
+  },
+  "topBubbleAssets": [{
+    "name": string, 
+    "riskScore": number, 
+    "sector": string, 
+    "price": string, 
+    "reason": string
+  }]
+}
+`;
+
+function extractJSON(text: string) {
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (match) {
+      try { return JSON.parse(match[1]); } catch(e2) {}
+    }
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      try { return JSON.parse(text.substring(firstBrace, lastBrace + 1)); } catch(e3) {}
+    }
+    return null;
   }
-};
-
-const bubbleAuditSchema: Schema = {
-    type: Type.OBJECT,
-    properties: {
-        riskStatus: { type: Type.STRING, enum: ["Safe", "Elevated", "Critical"] },
-        valuationVerdict: { type: Type.STRING, enum: ["Undervalued", "Fair Value", "Overvalued", "Bubble"] },
-        score: { type: Type.NUMBER },
-        fundamentals: { type: Type.STRING },
-        peerContext: { type: Type.STRING },
-        speculativeActivity: { type: Type.STRING, enum: ["Low", "Moderate", "High", "Extreme"] },
-        burstTrigger: { type: Type.STRING },
-        liquidityStatus: { type: Type.STRING, enum: ["Abundant", "Neutral", "Drying Up", "Illiquid"] }
-    }
-};
-
-const swotSchema: Schema = {
-    type: Type.OBJECT,
-    properties: {
-        strengths: { type: Type.ARRAY, items: { type: Type.STRING } },
-        weaknesses: { type: Type.ARRAY, items: { type: Type.STRING } },
-        opportunities: { type: Type.ARRAY, items: { type: Type.STRING } },
-        threats: { type: Type.ARRAY, items: { type: Type.STRING } }
-    }
-};
-
-const whistleblowerSchema: Schema = {
-    type: Type.OBJECT,
-    properties: {
-        integrityScore: { type: Type.NUMBER },
-        forensicVerdict: { type: Type.STRING },
-        anomalies: { type: Type.ARRAY, items: { type: Type.STRING } },
-        insiderDetails: { type: Type.ARRAY, items: { type: Type.STRING } }
-    }
-};
-
-const topBubbleAssetSchema: Schema = {
-    type: Type.OBJECT,
-    properties: {
-        name: { type: Type.STRING },
-        riskScore: { type: Type.NUMBER },
-        sector: { type: Type.STRING },
-        price: { type: Type.STRING },
-        reason: { type: Type.STRING }
-    }
-};
-
-const mainSchema: Schema = {
-    type: Type.OBJECT,
-    properties: {
-        riskScore: { type: Type.NUMBER, description: "Risk score from 0-100" },
-        bubbleProbability: { type: Type.NUMBER, description: "Bubble probability from 0-100" },
-        marketSentiment: { type: Type.STRING, enum: ["Bullish", "Bearish", "Neutral", "Euphoric"] },
-        keyMetrics: {
-            type: Type.ARRAY,
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    label: { type: Type.STRING },
-                    value: { type: Type.STRING }
-                }
-            }
-        },
-        technicalAnalysis: technicalAnalysisSchema,
-        bubbleAudit: bubbleAuditSchema,
-        swot: swotSchema,
-        whistleblower: whistleblowerSchema,
-        topBubbleAssets: { type: Type.ARRAY, items: topBubbleAssetSchema }
-    },
-    required: ["riskScore", "bubbleProbability", "marketSentiment", "keyMetrics", "technicalAnalysis", "bubbleAudit", "swot", "whistleblower", "topBubbleAssets"]
-};
-
-// --- SYSTEM PROMPTS ---
-const JSON_SYSTEM_INSTRUCTION = `
-You are a Senior Investment Banker and Forensic Financial Analyst.
-Analyze the provided query or data.
-
-CRITICAL RULES:
-1. **SENTIMENT**: Must be "Bullish", "Bearish", "Neutral", or "Euphoric".
-2. **DATA**: If real-time data is unavailable, provide realistic estimates based on your training data.
-`;
-
-const REPORT_SYSTEM_INSTRUCTION = `
-You are a Wall Street Forensic Analyst. 
-Based on the provided JSON data, write a High-Impact Executive Summary in Markdown.
-
-Structure:
-# Executive Summary
-[Thesis statement]
-
-## Evidence & Catalysts
-[Bulleted list of key findings]
-
-## Verdict
-[Final conclusion]
-
-MANDATORY ENDING: End with exactly one of: [[[Strong Buy]]], [[[Buy]]], [[[Hold]]], [[[Sell]]], or [[[Strong Sell]]].
-`;
+}
 
 export default async function handler(req: any, res: any) {
-  // CORS Headers
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-  );
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
   try {
     const { mode, data } = req.body;
-    
-    // 1. Initialize Google GenAI with Server Environment Variable
-    // This reads the key you set in Render
-    const apiKey = process.env.API_KEY || process.env.GROQ_API_KEY; 
+    const apiKey = process.env.GROQ_API_KEY || process.env.API_KEY;
 
-    if (!apiKey) {
-      console.error("API_KEY missing in server environment");
-      return res.status(500).json({ 
-          error: 'Server Config Error: API_KEY is missing.',
-          details: 'Please set the API_KEY environment variable in your Render Dashboard.'
-      });
-    }
+    if (!apiKey) return res.status(500).json({ error: 'Server Config Error: GROQ_API_KEY is missing.' });
 
-    const ai = new GoogleGenAI({ apiKey });
+    const groq = new Groq({ apiKey });
 
-    // 2. Handle Chat Mode
     if (mode === 'chat') {
         const payload = typeof data === 'string' ? JSON.parse(data) : data;
         const history = payload.history || [];
         const message = payload.message || '';
-
-        // Construct conversation for Gemini
-        let conversationPrompt = "You are 'The Reality Check', a witty, sarcastic, but intelligent financial assistant. Keep answers short (under 50 words). Use emojis.\n\nConversation History:\n";
-        history.forEach((h: any) => {
-             conversationPrompt += `${h.sender === 'user' ? 'User' : 'Assistant'}: ${h.text}\n`;
-        });
-        conversationPrompt += `\nUser: ${message}`;
-
-        const response = await ai.models.generateContent({
-            model: MODEL_NAME,
-            contents: conversationPrompt,
-        });
         
-        return res.status(200).send(response.text || "I'm speechless.");
+        const completion = await groq.chat.completions.create({
+            messages: [
+                { role: "system", content: "You are 'The Reality Check'. Keep it brief." },
+                ...history.map((h: any) => ({ role: h.sender === 'user' ? 'user' : 'assistant', content: h.text })),
+                { role: "user", content: message }
+            ],
+            model: MODEL_NAME,
+            max_tokens: 200,
+        });
+        return res.status(200).send(completion.choices[0]?.message?.content || "No comment.");
     }
 
-    // 3. Handle Analysis Modes (Market, Portfolio, Bubbles)
-    let prompt = "";
-    if (mode === 'market') {
-        prompt = `Perform a deep forensic analysis for: ${data}`;
-    } else if (mode === 'portfolio') {
-        prompt = `Audit this portfolio for risk, exposure, and bubble vulnerability: ${data}`;
-    } else if (mode === 'bubbles') {
-        prompt = `Scan global markets for major Bubbles, Overvalued Assets, and Crash Risks. Identify at least 6 specific assets with high risk.`;
-    }
+    let userPrompt = "";
+    if (mode === 'market') userPrompt = `Analyze: ${data}`;
+    else if (mode === 'portfolio') userPrompt = `Audit portfolio: ${data}`;
+    else if (mode === 'bubbles') userPrompt = `Scan bubbles.`;
 
-    // Step A: Generate JSON Data
-    const jsonResponse = await ai.models.generateContent({
+    const jsonCompletion = await groq.chat.completions.create({
+        messages: [
+            { role: "system", content: JSON_SYSTEM_PROMPT },
+            { role: "user", content: userPrompt }
+        ],
         model: MODEL_NAME,
-        contents: prompt,
-        config: {
-            systemInstruction: JSON_SYSTEM_INSTRUCTION,
-            responseMimeType: 'application/json',
-            responseSchema: mainSchema
-        }
+        response_format: { type: "json_object" },
+        temperature: 0.2
     });
 
-    const structuredData = JSON.parse(jsonResponse.text || "{}");
+    const rawContent = jsonCompletion.choices[0]?.message?.content || "{}";
+    let structuredData = extractJSON(rawContent);
 
-    // Backfill trendData for compatibility
+    if (!structuredData || !structuredData.riskScore) {
+        structuredData = FALLBACK_DATA;
+    }
+
     if (structuredData.technicalAnalysis?.priceData) {
         structuredData.trendData = structuredData.technicalAnalysis.priceData.map((p: any) => ({
             label: p.date,
@@ -218,24 +170,20 @@ export default async function handler(req: any, res: any) {
         }));
     }
 
-    // Step B: Generate Markdown Report based on JSON
-    const reportResponse = await ai.models.generateContent({
+    const reportCompletion = await groq.chat.completions.create({
+        messages: [
+            { role: "system", content: "You are a Wall Street Analyst. Write a brief executive summary in Markdown." },
+            { role: "user", content: `Data: ${JSON.stringify(structuredData)}` }
+        ],
         model: MODEL_NAME,
-        contents: `Generate a report based on this data: ${JSON.stringify(structuredData)}`,
-        config: {
-            systemInstruction: REPORT_SYSTEM_INSTRUCTION
-        }
     });
 
-    const markdownReport = reportResponse.text || "Analysis complete.";
+    const markdownReport = reportCompletion.choices[0]?.message?.content || "Analysis complete.";
 
-    return res.status(200).json({
-        markdownReport,
-        structuredData
-    });
+    return res.status(200).json({ markdownReport, structuredData });
 
   } catch (error: any) {
-    console.error("[API ERROR]", error);
-    return res.status(500).json({ error: error.message || 'Forensic Engine Offline', details: JSON.stringify(error) });
+    console.error("[GROQ API ERROR]", error);
+    return res.status(500).json({ error: error.message || 'Forensic Engine Offline' });
   }
 }
